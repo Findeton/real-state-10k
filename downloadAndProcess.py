@@ -1,7 +1,5 @@
-import os
 import cv2
-
-import glob, os
+import os
 import random
 from subprocess import call
 import pickle
@@ -21,6 +19,19 @@ def loadNotFoundVideos():
 
 notFoundVideos = loadNotFoundVideos()
 
+processedTxtFilesPath = "./processedTxtFiles.pkl"
+
+def loadProcessedTxtFiles():
+    if os.path.exists(processedTxtFilesPath):
+        with open(processedTxtFilesPath, 'rb') as f:
+            return pickle.load(f)
+    else:
+        return set()
+
+# These are the txt files that were SUCCESSFULLY processed
+# This is useful to create a "golden" record of the dataset
+processedTxtFiles = loadProcessedTxtFiles()
+
 def downloadVideo(videoPathURL, notFoundVideos):
     youtubeIDOffset = videoPathURL.find("/watch?v=") + len('/watch?v=')
 
@@ -28,10 +39,11 @@ def downloadVideo(videoPathURL, notFoundVideos):
     targetPath = "./downloaded/{}".format(youtubeID)
     
     if youtubeID in notFoundVideos:
-        return targetPath, "DOWNLOAD_ERROR", notFoundVideos
+        return targetPath, "DOWNLOAD_ERROR", notFoundVideos, youtubeID
     
     if os.path.exists(targetPath):
-        return targetPath, "EXISTS", notFoundVideos
+        print('Skipped {}, warning EXISTS'.format(targetPath))
+        return targetPath, False, notFoundVideos, youtubeID
 
     return_code = call(["youtube-dl", "-f", "bestvideo[height<=480]", videoPathURL, "-o", targetPath, "--cookies", "./cookies.txt" ])
     error = False if return_code == 0 else "DOWNLOAD_ERROR"
@@ -41,14 +53,14 @@ def downloadVideo(videoPathURL, notFoundVideos):
         with open(notFoundVideosPath, 'wb') as f:
             pickle.dump(notFoundVideos, f)
 
-    return targetPath, error, notFoundVideos
+    return targetPath, error, notFoundVideos, youtubeID
 
 def getBestMatchingFrame(frameTimeStamp, case, maxFrameMatchingDistanceInNS=8000):
     for caseIdx, c in enumerate(case):
         distance = abs(c['timeStamp'] - frameTimeStamp)
         if distance < maxFrameMatchingDistanceInNS:
-            print(c['timeStamp'], frameTimeStamp)
-            print('case index', caseIdx, 'distance',distance)
+            #print(c['timeStamp'], frameTimeStamp)
+            #print('case index', caseIdx, 'distance',distance)
             return caseIdx, distance
 
     return None, None
@@ -70,15 +82,15 @@ for rootPath in os.listdir(basePath):
                 line = l.split(' ')
 
                 timeStamp = int(line[0])
-                intrinics = [float(i) for i in line[1:7]]
+                intrinsics = [float(i) for i in line[1:7]]
                 pose = [float(i) for i in line[7:19]]
                 case.append({
                     'timeStamp': timeStamp, 
-                    'intrinics': intrinics,
+                    'intrinsics': intrinsics,
                     'pose': pose})
 
         # import pdb; pdb.set_trace()
-        downloadedVideoPath, error, notFoundVideos = downloadVideo(videoPathURL, notFoundVideos)
+        downloadedVideoPath, error, notFoundVideos, youtubeID = downloadVideo(videoPathURL, notFoundVideos)
         
         if error != False:
             print('Skipped {}, error {}'.format(downloadedVideoPath, error))
@@ -99,15 +111,22 @@ for rootPath in os.listdir(basePath):
             caseOffset, distance = getBestMatchingFrame(frameTimeStamp, case)
             if caseOffset is not None:
                 # match was successful, write frame
-                imageOutputDir = os.path.join(outputResultPath, subPath)
+                imageOutputDir = os.path.join(outputResultPath, youtubeID)
                 
                 if not os.path.exists(imageOutputDir):
-                 os.makedirs(imageOutputDir)
-                imageOutputPath = os.path.join(imageOutputDir, '{}.jpg'.format(frameTimeStamp) )
-                cv2.imwrite(imageOutputPath, imgFrame)
+                    os.makedirs(imageOutputDir)
+                imageOutputPath = os.path.join(imageOutputDir, '{}.jpg'.format(case[caseOffset]['timeStamp']) )
+                
+                if not os.path.exists(imageOutputPath):
+                    print("Writing {} for frame {}, distance {}".format(imageOutputPath, case[caseOffset]['timeStamp'], distance))
+                    cv2.imwrite(imageOutputPath, imgFrame)
+
                 case[caseOffset]['imgPath'] = imageOutputPath
         
         # write the case file to disk
-        caseFileOutputPath = os.path.join(imageOutputDir, 'case.pkl')
-        with open(caseFileOutputPath, 'wb') as f:
-            pickle.dump(case, f)
+        processedTxtFiles.add(subPath)
+        with open(processedTxtFilesPath, 'wb') as f:
+            pickle.dump(processedTxtFiles, f)
+        #caseFileOutputPath = os.path.join(imageOutputDir, 'case.pkl')
+        #with open(caseFileOutputPath, 'wb') as f:
+        #    pickle.dump(case, f)
