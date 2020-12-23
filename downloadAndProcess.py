@@ -55,15 +55,20 @@ def downloadVideo(videoPathURL, notFoundVideos):
 
     return targetPath, error, notFoundVideos, youtubeID
 
-def getBestMatchingFrame(frameTimeStamp, case, maxFrameMatchingDistanceInNS=8000):
+def getBestMatchingFrames(frameTimeStamp, case, maxFrameMatchingDistanceInNS=8000):
+    matches = []
     for caseIdx, c in enumerate(case):
         distance = abs(c['timeStamp'] - frameTimeStamp)
         if distance < maxFrameMatchingDistanceInNS:
             #print(c['timeStamp'], frameTimeStamp)
             #print('case index', caseIdx, 'distance',distance)
-            return caseIdx, distance
+            matches.append({
+                'caseIdx': caseIdx,
+                'distance': distance,
+            })
 
-    return None, None
+    matches.sort(key=lambda x: x['distance'])
+    return matches
 
 for rootPath in os.listdir(basePath):
     if 'download' in rootPath:
@@ -89,7 +94,6 @@ for rootPath in os.listdir(basePath):
                     'intrinsics': intrinsics,
                     'pose': pose})
 
-        # import pdb; pdb.set_trace()
         downloadedVideoPath, error, notFoundVideos, youtubeID = downloadVideo(videoPathURL, notFoundVideos)
         
         if error != False:
@@ -98,7 +102,8 @@ for rootPath in os.listdir(basePath):
 
         # build out the specific frames for the case
         video = cv2.VideoCapture(downloadedVideoPath) 
-        video.set(cv2.CAP_PROP_POS_MSEC, 0) 
+        video.set(cv2.CAP_PROP_POS_MSEC, 0)
+        #import pdb; pdb.set_trace()
 
         while video.isOpened(): 
             frameOK, imgFrame = video.read() 
@@ -108,8 +113,10 @@ for rootPath in os.listdir(basePath):
 
             frameTimeStamp = (int)(round(video.get(cv2.CAP_PROP_POS_MSEC)*1000))
 
-            caseOffset, distance = getBestMatchingFrame(frameTimeStamp, case)
-            if caseOffset is not None:
+            matches = getBestMatchingFrames(frameTimeStamp, case, 1e9 / (2* video.get(cv2.CAP_PROP_FPS)))
+            for match in matches:
+                caseOffset = match['caseIdx']
+                distance = match['distance']
                 # match was successful, write frame
                 imageOutputDir = os.path.join(outputResultPath, youtubeID)
                 
